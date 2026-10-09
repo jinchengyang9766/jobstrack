@@ -4,17 +4,6 @@ from fastapi import FastAPI, HTTPException
 
 app = FastAPI()
 
-applications = [
-    {
-        "id": 1,
-        "company": "Example Company",
-        "position": "Python Developer",
-        "status": "applied",
-    }
-]
-
-
-
 @app.get("/health")
 def health_check():
     return {
@@ -71,26 +60,60 @@ def create_application(company: str, position: str):
 
 @app.get("/applications/{application_id}")
 def get_application(application_id: int):
-    for application in applications:
-        if application["id"] == application_id:
-            return application
+    connection = sqlite3.connect("jobtrack.db")
+    connection.row_factory = sqlite3.Row
 
-    raise HTTPException(status_code=404, detail="Application not found")
+    cursor = connection.execute(
+        "SELECT id, company, position, status FROM applications WHERE id = ?",
+        (application_id,),
+    )
+    application = cursor.fetchone()
+    connection.close()
+
+    if application is None:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    return dict(application)
 
 @app.patch("/applications/{application_id}")
 def update_application(application_id: int, status: str):
-    for application in applications:
-        if application["id"] == application_id:
-            application["status"] = status
-            return application
+    connection = sqlite3.connect("jobtrack.db")
+    connection.row_factory = sqlite3.Row
 
-    raise HTTPException(status_code=404, detail="Application not found")
+    cursor = connection.execute(
+        "UPDATE applications SET status = ? WHERE id = ?",
+        (status, application_id),
+    )
+
+    if cursor.rowcount == 0:
+        connection.close()
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    connection.commit()
+
+    cursor = connection.execute(
+        "SELECT id, company, position, status FROM applications WHERE id = ?",
+        (application_id,),
+    )
+    application = cursor.fetchone()
+    connection.close()
+
+    return dict(application)
 
 @app.delete("/applications/{application_id}")
 def delete_application(application_id: int):
-    for application in applications:
-        if application["id"] == application_id:
-            applications.remove(application)
-            return {"message": "Application deleted"}
+    connection = sqlite3.connect("jobtrack.db")
 
-    raise HTTPException(status_code=404, detail="Application not found")
+    cursor = connection.execute(
+        "DELETE FROM applications WHERE id = ?",
+        (application_id,),
+    )
+
+    if cursor.rowcount == 0:
+        connection.close()
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    connection.commit()
+    connection.close()
+
+    return {"message": "Application deleted"}

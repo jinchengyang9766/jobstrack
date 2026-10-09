@@ -1,7 +1,8 @@
 import sqlite3
+from contextlib import closing
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query, Response
 from pydantic import BaseModel
 
 app = FastAPI()
@@ -14,6 +15,19 @@ class ApplicationCreate(BaseModel):
 
 class ApplicationUpdate(BaseModel):
     status: Literal["applied", "interview", "offer", "rejected"]
+
+
+class ApplicationRead(BaseModel):
+    id: int
+    company: str
+    position: str
+    status: str
+
+
+def get_db_connection():
+    connection = sqlite3.connect("jobtrack.db")
+    connection.row_factory = sqlite3.Row
+    return connection
 
 
 def clean_application_text(value: str, field: str, max_length: int):
@@ -46,10 +60,12 @@ def health_check():
         "project": "JobTrack",
     }
 
-@app.get("/applications")
+@app.get("/applications", response_model=list[ApplicationRead])
 def list_applications(
     company: str | None = None,
     status: Literal["applied", "interview", "offer", "rejected"] | None = None,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
 ):
     if company is not None:
         company = clean_application_text(company, "Company", 100)
@@ -69,13 +85,13 @@ def list_applications(
     if conditions:
         query += " WHERE " + " AND ".join(conditions)
 
-    query += " ORDER BY id"
+    query += " ORDER BY id LIMIT ? OFFSET ?"
+    values.append(limit)
+    values.append(offset)
 
-    connection = sqlite3.connect("jobtrack.db")
-    connection.row_factory = sqlite3.Row
-    cursor = connection.execute(query, values)
-    rows = cursor.fetchall()
-    connection.close()
+    with closing(get_db_connection()) as connection:
+        cursor = connection.execute(query, values)
+        rows = cursor.fetchall()
 
     results = []
     for row in rows:
@@ -83,24 +99,22 @@ def list_applications(
 
     return results
 
-@app.post("/applications")
+@app.post("/applications", response_model=ApplicationRead, status_code=201)
 def create_application(application: ApplicationCreate):
     company = clean_application_text(application.company, "Company", 100)
     position = clean_application_text(application.position, "Position", 150)
 
-    connection = sqlite3.connect("jobtrack.db")
+    with closing(get_db_connection()) as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO applications (company, position, status)
+            VALUES (?, ?, ?)
+            """,
+            (company, position, "applied"),
+        )
 
-    cursor = connection.execute(
-        """
-        INSERT INTO applications (company, position, status)
-        VALUES (?, ?, ?)
-        """,
-        (company, position, "applied"),
-    )
-
-    connection.commit()
-    application_id = cursor.lastrowid
-    connection.close()
+        connection.commit()
+        application_id = cursor.lastrowid
 
     return {
         "id": application_id,
@@ -109,26 +123,23 @@ def create_application(application: ApplicationCreate):
         "status": "applied",
     }
 
-@app.get("/applications/{application_id}")
+@app.get("/applications/{application_id}", response_model=ApplicationRead)
 def get_application(application_id: int):
     validate_application_id(application_id)
 
-    connection = sqlite3.connect("jobtrack.db")
-    connection.row_factory = sqlite3.Row
-
-    cursor = connection.execute(
-        "SELECT id, company, position, status FROM applications WHERE id = ?",
-        (application_id,),
-    )
-    application = cursor.fetchone()
-    connection.close()
+    with closing(get_db_connection()) as connection:
+        cursor = connection.execute(
+            "SELECT id, company, position, status FROM applications WHERE id = ?",
+            (application_id,),
+        )
+        application = cursor.fetchone()
 
     if application is None:
         raise HTTPException(status_code=404, detail="Application not found")
 
     return dict(application)
 
-@app.patch("/applications/{application_id}")
+@app.patch("/applications/{application_id}", response_model=ApplicationRead)
 def update_application(
     application_id: int,
     update: ApplicationUpdate,
@@ -136,45 +147,38 @@ def update_application(
     validate_application_id(application_id)
     status = update.status
 
-    connection = sqlite3.connect("jobtrack.db")
-    connection.row_factory = sqlite3.Row
+    with closing(get_db_connection()) as connection:
+        cursor = connection.execute(
+            "UPDATE applications SET status = ? WHERE id = ?",
+            (status, application_id),
+        )
 
-    cursor = connection.execute(
-        "UPDATE applications SET status = ? WHERE id = ?",
-        (status, application_id),
-    )
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Application not found")
 
-    if cursor.rowcount == 0:
-        connection.close()
-        raise HTTPException(status_code=404, detail="Application not found")
+        connection.commit()
 
-    connection.commit()
-
-    cursor = connection.execute(
-        "SELECT id, company, position, status FROM applications WHERE id = ?",
-        (application_id,),
-    )
-    application = cursor.fetchone()
-    connection.close()
+        cursor = connection.execute(
+            "SELECT id, company, position, status FROM applications WHERE id = ?",
+            (application_id,),
+        )
+        application = cursor.fetchone()
 
     return dict(application)
 
-@app.delete("/applications/{application_id}")
+@app.delete("/applications/{application_id}", status_code=204)
 def delete_application(application_id: int):
     validate_application_id(application_id)
 
-    connection = sqlite3.connect("jobtrack.db")
+    with closing(get_db_connection()) as connection:
+        cursor = connection.execute(
+            "DELETE FROM applications WHERE id = ?",
+            (application_id,),
+        )
 
-    cursor = connection.execute(
-        "DELETE FROM applications WHERE id = ?",
-        (application_id,),
-    )
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Application not found")
 
-    if cursor.rowcount == 0:
-        connection.close()
-        raise HTTPException(status_code=404, detail="Application not found")
+        connection.commit()
 
-    connection.commit()
-    connection.close()
-
-    return {"message": "Application deleted"}
+    return Response(status_code=204)

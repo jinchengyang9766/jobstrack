@@ -47,7 +47,7 @@ def test_application_lifecycle(db_client):
         "/applications",
         json={"company": "  Test Company  ", "position": "  Python Developer  "},
     )
-    assert response.status_code == 200
+    assert response.status_code == 201
     application = response.json()
     application_id = application["id"]
     assert application["company"] == "Test Company"
@@ -84,8 +84,8 @@ def test_application_lifecycle(db_client):
         assert response.json()["status"] == status
 
     response = client.delete(application_url)
-    assert response.status_code == 200
-    assert response.json() == {"message": "Application deleted"}
+    assert response.status_code == 204
+    assert response.content == b""
 
     response = client.get(application_url)
     assert response.status_code == 404
@@ -128,7 +128,7 @@ def test_text_length_boundaries(db_client):
         "/applications",
         json={"company": f"  {company}  ", "position": f"  {position}  "},
     )
-    assert response.status_code == 200
+    assert response.status_code == 201
     application = response.json()
     assert application["company"] == company
     assert application["position"] == position
@@ -141,12 +141,12 @@ def test_company_filter(db_client):
     response = db_client.post(
         "/applications", json={"company": "O'Reilly", "position": "Developer"}
     )
-    assert response.status_code == 200
+    assert response.status_code == 201
     application = response.json()
     response = db_client.post(
         "/applications", json={"company": "Other Company", "position": "Developer"}
     )
-    assert response.status_code == 200
+    assert response.status_code == 201
     response = db_client.get("/applications")
     assert response.status_code == 200
     assert len(response.json()) == 2
@@ -169,7 +169,7 @@ def test_missing_application_does_not_change_others(db_client, method):
     response = db_client.post(
         "/applications", json={"company": "Company", "position": "Developer"}
     )
-    assert response.status_code == 200
+    assert response.status_code == 201
     application = response.json()
     missing_id = application["id"] + 1
     url = f"/applications/{missing_id}"
@@ -189,7 +189,7 @@ def test_invalid_status_preserves_record(db_client, status):
     response = db_client.post(
         "/applications", json={"company": "Company", "position": "Developer"}
     )
-    assert response.status_code == 200
+    assert response.status_code == 201
     application = response.json()
     application_url = f"/applications/{application['id']}"
     response = db_client.patch(application_url, json={"status": status})
@@ -228,7 +228,7 @@ def test_invalid_patch_body_preserves_record(db_client, body):
     response = db_client.post(
         "/applications", json={"company": "Company", "position": "Developer"}
     )
-    assert response.status_code == 200
+    assert response.status_code == 201
     application = response.json()
     url = f"/applications/{application['id']}"
 
@@ -243,7 +243,7 @@ def test_patch_requires_request_body(db_client):
     response = db_client.post(
         "/applications", json={"company": "Company", "position": "Developer"}
     )
-    assert response.status_code == 200
+    assert response.status_code == 201
     application = response.json()
     url = f"/applications/{application['id']}"
 
@@ -266,7 +266,7 @@ def filter_records(db_client):
             "/applications",
             json={"company": data["company"], "position": data["position"]},
         )
-        assert response.status_code == 200
+        assert response.status_code == 201
         application_id = response.json()["id"]
         response = db_client.patch(
             f"/applications/{application_id}", json={"status": data["status"]}
@@ -302,3 +302,54 @@ def test_invalid_status_filter(db_client, filter_records, status):
     response = db_client.get("/applications")
     assert response.status_code == 200
     assert response.json() == filter_records
+
+
+@pytest.mark.parametrize("params, expected_indexes", [
+    ({"limit": 2}, [0, 1]),
+    ({"limit": 2, "offset": 1}, [1, 2]),
+    ({"limit": 1, "offset": 2}, [2]),
+    ({"limit": 2, "offset": 3}, []),
+    ({"company": "Acme", "limit": 2, "offset": 1}, [1]),
+    ({"status": "interview", "limit": 1, "offset": 1}, [2]),
+    ({"limit": 100}, [0, 1, 2]),
+])
+def test_pagination_with_filters(db_client, filter_records, params, expected_indexes):
+    expected = []
+    for index in expected_indexes:
+        expected.append(filter_records[index])
+
+    response = db_client.get("/applications", params=params)
+    assert response.status_code == 200
+    assert response.json() == expected
+
+
+@pytest.mark.parametrize("params", [
+    {"limit": 0},
+    {"limit": -1},
+    {"limit": 101},
+    {"limit": "abc"},
+    {"offset": -1},
+    {"offset": "abc"},
+])
+def test_invalid_pagination(db_client, params):
+    response = db_client.get("/applications", params=params)
+    assert response.status_code == 422
+
+
+def test_default_page_size(db_client):
+    records = []
+    for index in range(21):
+        response = db_client.post(
+            "/applications",
+            json={"company": "Company", "position": f"Developer {index}"},
+        )
+        assert response.status_code == 201
+        records.append(response.json())
+
+    response = db_client.get("/applications")
+    assert response.status_code == 200
+    assert response.json() == records[:20]
+
+    response = db_client.get("/applications", params={"limit": 100})
+    assert response.status_code == 200
+    assert response.json() == records

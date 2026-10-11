@@ -39,6 +39,7 @@ python -m uvicorn main:app --reload
 | GET | `/health` | 检查服务是否运行 | 200 |
 | POST | `/applications` | 新增申请 | 201 |
 | GET | `/applications` | 查看、筛选、分页 | 200 |
+| GET | `/applications/stats` | 统计总数及各状态数量 | 200 |
 | GET | `/applications/{application_id}` | 查看一条申请 | 200 |
 | PATCH | `/applications/{application_id}` | 修改申请状态 | 200 |
 | DELETE | `/applications/{application_id}` | 删除申请，返回空响应 | 204 |
@@ -77,6 +78,15 @@ python -m uvicorn main:app --reload
 
 找不到申请返回 `404`，请求数据不符合要求返回 `422`。
 
+`/applications/stats` 统计全部申请，不受列表分页影响。返回示例：
+
+```json
+{
+  "total": 3,
+  "by_status": {"applied": 1, "interview": 2, "offer": 0, "rejected": 0}
+}
+```
+
 ## 测试
 
 激活虚拟环境后，在项目目录执行：
@@ -96,3 +106,4 @@ python -m pytest -q
 - `.gitignore`：让 Git 忽略虚拟环境、缓存和本地数据库。
 
 本地数据库不提交到 Git。新环境通过 `init_db.py` 创建数据库。
+学习记录：已练习 Git 分支与合并。

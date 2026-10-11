@@ -99,6 +99,23 @@ def list_applications(
 
     return results
 
+@app.get("/applications/stats")
+def application_stats():
+    with closing(get_db_connection()) as connection:
+        cursor = connection.execute(
+            "SELECT status, COUNT(*) AS count FROM applications GROUP BY status"
+        )
+        rows = cursor.fetchall()
+
+    by_status = {"applied": 0, "interview": 0, "offer": 0, "rejected": 0}
+    total = 0
+    for row in rows:
+        by_status[row["status"]] = row["count"]
+        total += row["count"]
+
+    return {"total": total, "by_status": by_status}
+
+
 @app.post("/applications", response_model=ApplicationRead, status_code=201)
 def create_application(application: ApplicationCreate):
     company = clean_application_text(application.company, "Company", 100)

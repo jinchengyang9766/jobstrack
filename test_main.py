@@ -336,6 +336,45 @@ def test_invalid_pagination(db_client, params):
     assert response.status_code == 422
 
 
+def test_stats_empty_database(db_client):
+    response = db_client.get("/applications/stats")
+    assert response.status_code == 200
+    assert response.json() == {
+        "total": 1,
+        "by_status": {"applied": 0, "interview": 0, "offer": 0, "rejected": 0},
+    }
+
+
+def test_stats_follow_updates_and_deletes(db_client, filter_records):
+    response = db_client.get("/applications/stats")
+    assert response.status_code == 200
+    assert response.json() == {
+        "total": 3,
+        "by_status": {"applied": 1, "interview": 2, "offer": 0, "rejected": 0},
+    }
+
+    application_id = filter_records[0]["id"]
+    response = db_client.patch(
+        f"/applications/{application_id}", json={"status": "offer"}
+    )
+    assert response.status_code == 200
+    response = db_client.get("/applications/stats")
+    assert response.status_code == 200
+    assert response.json() == {
+        "total": 3,
+        "by_status": {"applied": 0, "interview": 2, "offer": 1, "rejected": 0},
+    }
+
+    response = db_client.delete(f"/applications/{application_id}")
+    assert response.status_code == 204
+    response = db_client.get("/applications/stats")
+    assert response.status_code == 200
+    assert response.json() == {
+        "total": 2,
+        "by_status": {"applied": 0, "interview": 2, "offer": 0, "rejected": 0},
+    }
+
+
 def test_default_page_size(db_client):
     records = []
     for index in range(21):
